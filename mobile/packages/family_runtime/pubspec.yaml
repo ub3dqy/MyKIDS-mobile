@@ -1,0 +1,15 @@
+name: family_runtime
+description: Process identity shared by the foreground and background engines.
+version: 1.0.0
+publish_to: none
+environment:
+  sdk: ^3.13.0
+dependencies:
+  flutter:
+    sdk: flutter
+flutter:
+  plugin:
+    platforms:
+      android:
+        package: ru.mykids.family_runtime
+        pluginClass: FamilyRuntimePlugin

@@ -1,0 +1,11 @@
+{
+  "upstream_version": "150.7871.04",
+  "source_commit": "a545de45259b47dfac5f3635863e47cb601f1bb2",
+  "upstream_source_sha256": "a91ced5728ffaf21b9ebe1b7b9e31e459260f7c34f57da34cd14d5323aabc98a",
+  "patched_source_sha256": "ca154a4bb45b9e1a0eab5bd8eeec8e7bbd1a60bbc272e92bea9b3d0d52e3f26d",
+  "upstream_aar_sha256": "1872dda4e3bf7d6ea6f7c6e11861332081c57081a1e62fc82fab72415c69c84c",
+  "reference_fix": "https://github.com/yellowclass/spx-webrtc/pull/1",
+  "upstream_report": "https://github.com/webrtc-sdk/webrtc/issues/315",
+  "extra_guard": "keepAlive is checked again under the delivery lock",
+  "native_libraries_modified": false
+}

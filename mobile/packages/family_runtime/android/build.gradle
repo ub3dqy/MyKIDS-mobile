@@ -1,0 +1,14 @@
+group = 'ru.mykids.family_runtime'
+version = '1.0.0'
+
+apply plugin: 'com.android.library'
+
+android {
+    namespace = 'ru.mykids.family_runtime'
+    compileSdk = 37
+    defaultConfig { minSdk = 26 }
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+}

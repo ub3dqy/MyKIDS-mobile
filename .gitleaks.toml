@@ -1,0 +1,10 @@
+[extend]
+useDefault = true
+
+[allowlist]
+description = "An exact demo-only test value and a local storage key name."
+regexTarget = "secret"
+regexes = [
+    '''^synthetic-invited-123$''',
+    '''^mykids\.engagement\.approval\.v1$''',
+]

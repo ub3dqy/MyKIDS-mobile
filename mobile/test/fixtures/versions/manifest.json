@@ -1,0 +1,19 @@
+{
+  "description": "Unmodified historical repository sources saved before later fixes; not relabelled current code. APK hashes identify retained releases; this fixture tests source, not APK UI.",
+  "fixtures": [
+    {
+      "version": "0.1.38",
+      "path": "test/fixtures/versions/repository_0_1_38.dart",
+      "source": "tmp/coldstart-baseline/mobile/lib/repository.dart",
+      "sha256": "e64ce453d75c7ff6af6e5df9b7110c64f2d76698de87dffe5a47221dd05a1acf",
+      "apk_sha256": "de876ace30010e09b8a2c12be7a12ec687c140d23e5ac7ce5f681b59e4fa9fff"
+    },
+    {
+      "version": "0.1.42",
+      "path": "test/fixtures/versions/repository_0_1_42.dart",
+      "source": "tmp/update-power-baseline/mobile/lib/repository.dart",
+      "sha256": "c3c0189a12bedbfdfc70498fe0dd9dec562c2d942e1613449c9880a6b7e25ae0",
+      "apk_sha256": "eff053d7cd3088f26b5b3627831b09cf3e42f724ecaa1f84ca458691e241d28b"
+    }
+  ]
+}
