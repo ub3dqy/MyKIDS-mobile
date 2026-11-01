@@ -8,7 +8,7 @@
 
 <p align="center">
   <strong>English</strong> · <a href="README.ru.md">Русский</a> ·
-  <a href="https://api.xn--80ajzgig.online/downloads/MyKIDS-0.1.122.apk">Download for Android</a> ·
+  <a href="https://api.xn--80ajzgig.online/downloads/MyKIDS-0.1.123.apk">Download for Android</a> ·
   <a href="https://github.com/ub3dqy/MyKIDS-mobile/issues/new?template=feature_request.md">Share an idea</a>
 </p>
 
@@ -53,9 +53,9 @@ The action missions work offline and do not change the family coin balance. Pare
 
 ## Getting started
 
-**Version 0.1.122 · Android 8 or newer · Russian interface**
+**Version 0.1.123 · Android 8 or newer · Russian interface**
 
-[Download MyKIDS for Android](https://api.xn--80ajzgig.online/downloads/MyKIDS-0.1.122.apk)
+[Download MyKIDS for Android](https://api.xn--80ajzgig.online/downloads/MyKIDS-0.1.123.apk)
 
 To sign in, you need an existing family account or an invitation from a parent in that family. Downloading the app does not create a family or give access to someone else's data.
 

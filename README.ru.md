@@ -8,7 +8,7 @@
 
 <p align="center">
   <a href="README.md">English</a> · <strong>Русский</strong> ·
-  <a href="https://api.xn--80ajzgig.online/downloads/MyKIDS-0.1.122.apk">Скачать для Android</a> ·
+  <a href="https://api.xn--80ajzgig.online/downloads/MyKIDS-0.1.123.apk">Скачать для Android</a> ·
   <a href="https://github.com/ub3dqy/MyKIDS-mobile/issues/new?template=feature_request.md">Предложить идею</a>
 </p>
 
@@ -53,9 +53,9 @@ MyKIDS — семейное приложение для Android. Оно помо
 
 ## Как начать
 
-**Версия 0.1.122 · Android 8 и новее · Интерфейс на русском**
+**Версия 0.1.123 · Android 8 и новее · Интерфейс на русском**
 
-[Скачать MyKIDS для Android](https://api.xn--80ajzgig.online/downloads/MyKIDS-0.1.122.apk)
+[Скачать MyKIDS для Android](https://api.xn--80ajzgig.online/downloads/MyKIDS-0.1.123.apk)
 
 Для входа нужен существующий семейный профиль или приглашение от родителя этой семьи. Установка приложения сама по себе не создаёт семью и не открывает доступ к чужим данным.
 
