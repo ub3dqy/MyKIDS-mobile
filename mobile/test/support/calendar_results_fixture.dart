@@ -7,6 +7,9 @@ const russianIdentity = '22222222222222222222222222222222';
 
 class ResultsFixture extends FamilyRepository {
   final changes = <Map<String, dynamic>>[];
+  @override
+  Future<List<Map<String, Object?>>> pending() async => [];
+
   ResultsFixture({String role = 'parent'}) {
     variant = role;
     token = 'synthetic-results-session';

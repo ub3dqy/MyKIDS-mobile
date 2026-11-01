@@ -247,9 +247,16 @@ Future<int?> chooseTaskResult(
         builder: (context, setDialogState) {
           final valid = count != null && count! >= 0 && count! <= total;
           final coins = valid ? taskRewardForCount(options, count!) : null;
+          final narrow = MediaQuery.sizeOf(context).width < 400;
           return AlertDialog(
             title: const Text('Проверить результат'),
             scrollable: true,
+            insetPadding: narrow
+                ? const EdgeInsets.symmetric(horizontal: 12, vertical: 24)
+                : null,
+            actionsPadding: narrow
+                ? const EdgeInsets.fromLTRB(8, 0, 8, 16)
+                : null,
             content: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
