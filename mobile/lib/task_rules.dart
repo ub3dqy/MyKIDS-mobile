@@ -57,22 +57,32 @@ Future<bool> confirmTaskFinances(
   FamilyRepository repository,
   Map<String, dynamic> task, {
   FamilyActionAccess? access,
-}) async =>
-    await showFamilyActionDialog<bool>(
-      context: context,
-      builder: (_) =>
-          _FinancialConsent(repository: repository, task: task, access: access),
-    ) ??
-    false;
+}) async {
+  final decisionAccess = access ?? FamilyActionAccess(repository);
+  final shownTask = Map<String, dynamic>.from(task);
+  try {
+    return await showFamilyActionDialog<bool>(
+          context: context,
+          builder: (_) => _FinancialConsent(
+            repository: repository,
+            task: shownTask,
+            access: decisionAccess,
+          ),
+        ) ??
+        false;
+  } finally {
+    if (access == null) decisionAccess.dispose();
+  }
+}
 
 class _FinancialConsent extends StatefulWidget {
   final FamilyRepository repository;
   final Map<String, dynamic> task;
-  final FamilyActionAccess? access;
+  final FamilyActionAccess access;
   const _FinancialConsent({
     required this.repository,
     required this.task,
-    this.access,
+    required this.access,
   });
 
   @override
@@ -80,25 +90,56 @@ class _FinancialConsent extends StatefulWidget {
 }
 
 class _FinancialConsentState extends State<_FinancialConsent> {
-  late final String session;
-  late final int generation;
-  bool closing = false;
+  late final String terms;
+  bool closing = false, accessRevoked = false;
 
   @override
   void initState() {
     super.initState();
-    session = widget.repository.sessionTag;
-    generation = widget.repository.generation;
+    terms = taskTermsText(widget.task);
     widget.repository.addListener(changed);
-    widget.access?.addListener(changed);
+    widget.access.addListener(changed);
   }
 
   void changed() {
+    if (!widget.access.valid) accessRevoked = true;
     if (mounted) setState(() {});
   }
 
+  bool get owns =>
+      !accessRevoked &&
+      widget.access.valid &&
+      widget.repository.role == 'parent';
+
+  bool get canApprove {
+    if (!owns || !widget.repository.online) return false;
+    final task = widget.task;
+    final current = widget.repository
+        .rows('tasks')
+        .where((t) => t['id'] == task['id'])
+        .firstOrNull;
+    final scope = task['financial_approval_scope'];
+    return task['version'] is int &&
+        (task['version'] as int) >= 1 &&
+        task['financial_approved'] == 0 &&
+        current != null &&
+        current['version'] == task['version'] &&
+        current['status'] == task['status'] &&
+        current['title'] == task['title'] &&
+        current['financial_approved'] == 0 &&
+        current['financial_approval_scope'] == scope &&
+        const ['single', 'repeat'].contains(scope) &&
+        taskTermsText(current) == terms;
+  }
+
   void close(bool consent) {
-    if (closing) return;
+    if (!mounted || ModalRoute.of(context)?.isCurrent != true || closing) {
+      return;
+    }
+    if (consent && !canApprove) {
+      setState(() {});
+      return;
+    }
     setState(() => closing = true);
     Navigator.pop(context, consent);
   }
@@ -106,34 +147,15 @@ class _FinancialConsentState extends State<_FinancialConsent> {
   @override
   void dispose() {
     widget.repository.removeListener(changed);
-    widget.access?.removeListener(changed);
+    widget.access.removeListener(changed);
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     final repo = widget.repository, task = widget.task;
-    final owns =
-        repo.signedIn &&
-        repo.sessionTag == session &&
-        repo.generation == generation &&
-        (widget.access?.valid ?? true) &&
-        repo.role == 'parent';
-    final current = repo
-        .rows('tasks')
-        .where((t) => t['id'] == task['id'])
-        .firstOrNull;
     final scope = task['financial_approval_scope'];
-    final valid =
-        owns &&
-        repo.online &&
-        task['version'] is int &&
-        (task['version'] as int) >= 1 &&
-        current != null &&
-        current['version'] == task['version'] &&
-        current['financial_approved'] == 0 &&
-        current['financial_approval_scope'] == scope &&
-        const ['single', 'repeat'].contains(scope);
+    final valid = canApprove;
     return AlertDialog(
       scrollable: true,
       title: Text(
@@ -146,7 +168,7 @@ class _FinancialConsentState extends State<_FinancialConsent> {
             ? 'Нет связи с сервером. Согласование доступно после подключения.'
             : !valid
             ? 'Условия задания изменились или уже согласованы. Обновите данные и откройте задание заново.'
-            : '${task['title']}\n\n${taskTermsText(task)}\n\n'
+            : '${task['title']}\n\n$terms\n\n'
                   '${scope == 'repeat' ? 'Такие же условия согласуются для всех дней этого повтора, включая будущие. Отдельно изменённые суммы нужно согласовать отдельно.' : 'Согласуются условия только этого задания. Другие дни повтора сохранят свои условия.'}'
                   '\n\nСейчас монеты не начисляются и не списываются.',
       ),
