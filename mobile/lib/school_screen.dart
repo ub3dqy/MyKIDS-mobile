@@ -1,8 +1,11 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 
 import 'calendar.dart';
 import 'calendar_results.dart';
 import 'event_style.dart';
+import 'family_action.dart';
 import 'forms.dart';
 import 'form_layout.dart';
 import 'repository.dart';
@@ -28,10 +31,14 @@ class SchoolScreen extends StatefulWidget {
   State<SchoolScreen> createState() => _SchoolScreenState();
 }
 
+enum _SchoolTaskAction { complete, approveFinances, notCompleted, submit }
+
 class _SchoolScreenState extends State<SchoolScreen> {
   late DateTime day;
   bool busy = false;
   bool gradeAction = false;
+  bool _taskInteractionOpen = false;
+  FamilyActionAccess? _taskViewAccess, _activeTaskAccess;
   FamilyRepository get repo => widget.repository;
   Map<String, String> get subjects => {
     for (final subject in repo.rows('subjects'))
@@ -43,6 +50,228 @@ class _SchoolScreenState extends State<SchoolScreen> {
     super.initState();
     final date = widget.initialDay ?? familyClock(repo.snapshot);
     day = DateTime(date.year, date.month, date.day);
+    repo.addListener(observeTaskAccess);
+  }
+
+  void observeTaskAccess() {
+    if (_taskViewAccess?.valid == false) _taskViewAccess?.invalidate();
+    if (_activeTaskAccess?.valid == false) _activeTaskAccess?.invalidate();
+  }
+
+  @override
+  void didUpdateWidget(covariant SchoolScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.repository, repo)) {
+      oldWidget.repository.removeListener(observeTaskAccess);
+      _taskViewAccess?.invalidate();
+      _activeTaskAccess?.invalidate();
+      repo.addListener(observeTaskAccess);
+    }
+  }
+
+  @override
+  void dispose() {
+    repo.removeListener(observeTaskAccess);
+    _taskViewAccess?.dispose();
+    _activeTaskAccess?.invalidate();
+    super.dispose();
+  }
+
+  FamilyActionAccess captureTaskViewAccess() {
+    final owner = repo;
+    if (_taskViewAccess == null || !_taskViewAccess!.valid) {
+      _taskViewAccess?.dispose();
+      _taskViewAccess = FamilyActionAccess(
+        owner,
+        permitted: () => mounted && identical(repo, owner),
+      );
+    }
+    return _taskViewAccess!;
+  }
+
+  bool taskViewCurrent(FamilyActionAccess view, DateTime selectedDay) =>
+      mounted &&
+      view.valid &&
+      identical(repo, view.repository) &&
+      day == selectedDay &&
+      ModalRoute.of(context)?.isCurrent == true;
+
+  bool taskDecisionCurrent(
+    FamilyRepository owner,
+    Map<String, dynamic> shown,
+    _SchoolTaskAction action,
+  ) {
+    final current = owner
+        .rows('tasks')
+        .where((t) => t['id'] == shown['id'])
+        .firstOrNull;
+    if (current == null ||
+        const [
+          'version',
+          'status',
+          'title',
+          'reward',
+          'penalty',
+          'is_required',
+          'reward_options',
+          'require_photo',
+          'required_photos',
+          'financial_approved',
+          'financial_approval_scope',
+          'author_id',
+          'reviewer_id',
+          'planned_start',
+          'planned_end',
+          'due_at',
+        ].any((key) => jsonEncode(current[key]) != jsonEncode(shown[key]))) {
+      return false;
+    }
+    final active = [
+      'assigned',
+      'returned',
+      'submitted',
+    ].contains(current['status']);
+    final approved = current['financial_approved'] == 1;
+    return switch (action) {
+      _SchoolTaskAction.submit =>
+        owner.role == 'child' &&
+            ['assigned', 'returned'].contains(current['status']) &&
+            current['require_photo'] != 1,
+      _SchoolTaskAction.complete =>
+        owner.online &&
+            active &&
+            approved &&
+            canReviewTask(owner.snapshot!['user'], current) &&
+            (current['require_photo'] != 1 || current['status'] == 'submitted'),
+      _SchoolTaskAction.approveFinances =>
+        owner.online && active && owner.role == 'parent' && !approved,
+      _SchoolTaskAction.notCompleted =>
+        owner.online &&
+            canMarkTaskNotCompleted(owner.snapshot!['user'], current) &&
+            (!taskIsRequired(current) || approved),
+    };
+  }
+
+  Future<void> taskAction(
+    Map<String, dynamic> task,
+    _SchoolTaskAction action,
+    FamilyActionAccess view,
+    DateTime selectedDay,
+  ) async {
+    if (busy ||
+        gradeAction ||
+        _taskInteractionOpen ||
+        !taskViewCurrent(view, selectedDay)) {
+      return;
+    }
+    final owner = view.repository;
+    // Reward tiers are nested JSON. Do not retain a live snapshot inside a decision.
+    final shown = Map<String, dynamic>.from(
+      jsonDecode(jsonEncode(task)) as Map,
+    );
+    var sending = false;
+    final access = FamilyActionAccess(
+      owner,
+      permitted: () =>
+          mounted &&
+          identical(repo, owner) &&
+          view.valid &&
+          day == selectedDay &&
+          (sending || taskDecisionCurrent(owner, shown, action)),
+    );
+    if (!access.valid) {
+      access.dispose();
+      return;
+    }
+    setState(() => _taskInteractionOpen = true);
+    _activeTaskAccess = access;
+    try {
+      final Map<String, dynamic> body;
+      if (action == _SchoolTaskAction.complete) {
+        body = calendarCompletion(shown, selectedDay);
+        if (taskRewardOptions(shown) != null) {
+          final count = await chooseTaskResult(context, shown, access: access);
+          if (count == null || !access.valid) return;
+          body['completed_count'] = count;
+        } else {
+          final confirmed = await showFamilyActionDialog<bool>(
+            context: context,
+            builder: (_) => FamilyActionDialog<bool>(
+              access: access,
+              builder: (context, close) => AlertDialog(
+                title: const Text('Подтвердить выполнение?'),
+                scrollable: true,
+                content: Text(
+                  '${shown['title']}\nНаграда: ${shown['reward']} монет.',
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => close(null),
+                    child: const Text('Отмена'),
+                  ),
+                  TextButton(
+                    onPressed: () => close(true),
+                    child: const Text('Выполнено'),
+                  ),
+                ],
+              ),
+            ),
+          );
+          if (confirmed != true || !access.valid) return;
+        }
+      } else if (action == _SchoolTaskAction.approveFinances) {
+        if (!await confirmTaskFinances(context, owner, shown, access: access) ||
+            !access.valid) {
+          return;
+        }
+        body = {
+          'action': 'approve_finances',
+          'task_version': shown['version'],
+          'financial_scope': shown['financial_approval_scope'],
+        };
+      } else if (action == _SchoolTaskAction.notCompleted) {
+        if (!await confirmTaskNotCompleted(context, shown, access: access) ||
+            !access.valid) {
+          return;
+        }
+        body = {'action': 'not_completed', 'task_version': shown['version']};
+      } else {
+        body = calendarSubmission(shown);
+      }
+      if (!taskViewCurrent(view, selectedDay) || !access.valid) return;
+      await run(() async {
+        access.requireCurrent();
+        final submission = action == _SchoolTaskAction.submit;
+        final path =
+            '/v1/tasks/${shown['id']}/${submission ? 'submissions' : 'actions'}';
+        if (submission) {
+          final queued = await owner.pending();
+          access.requireCurrent();
+          if (queued.any(
+            (row) => row['path'] == path && row['state'] != 'failed',
+          )) {
+            throw ApiFailure(
+              409,
+              'Результат уже сохранён для отправки. Дождитесь подключения.',
+            );
+          }
+        }
+        if (sending ||
+            !taskViewCurrent(view, selectedDay) ||
+            !taskDecisionCurrent(owner, shown, action)) {
+          throw ApiFailure(
+            409,
+            'Задание или доступ изменились. Откройте действие заново.',
+          );
+        }
+        sending = true;
+        return owner.mutate(path, body, offlineSubmission: submission);
+      });
+    } finally {
+      _activeTaskAccess = null;
+      access.dispose();
+      if (mounted) setState(() => _taskInteractionOpen = false);
+    }
   }
 
   Future<void> run(Future<Map<String, dynamic>> Function() action) async {
@@ -308,45 +537,13 @@ class _SchoolScreenState extends State<SchoolScreen> {
           (task['author_id'] == repo.userId ||
               task['reviewer_id'] == repo.userId));
 
-  Future<void> completeTask(Map<String, dynamic> task) async {
-    final selectedDay = day;
-    final body = calendarCompletion(task, selectedDay);
-    if (taskRewardOptions(task) != null) {
-      final count = await chooseTaskResult(context, task);
-      if (count == null || !mounted) return;
-      body['completed_count'] = count;
-      await run(() => repo.mutate('/v1/tasks/${task['id']}/actions', body));
-      return;
-    }
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Подтвердить выполнение?'),
-        scrollable: true,
-        content: Text('${task['title']}\nНаграда: ${task['reward']} монет.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Отмена'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Выполнено'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true || !mounted) return;
-    await run(
-      () => repo.mutate(
-        '/v1/tasks/${task['id']}/actions',
-        calendarCompletion(task, selectedDay),
-      ),
-    );
-  }
-
   Widget taskResult(CalendarResultItem item) {
-    final task = item.entry.source!;
+    final task = Map<String, dynamic>.from(
+      jsonDecode(jsonEncode(item.entry.source!)) as Map,
+    );
+    final selectedDay = day;
+    final view = captureTaskViewAccess();
+    final taskBusy = busy || gradeAction || _taskInteractionOpen;
     final active = [
       'assigned',
       'returned',
@@ -371,26 +568,33 @@ class _SchoolScreenState extends State<SchoolScreen> {
             ['assigned', 'returned'].contains(task['status']))
           if (task['require_photo'] == 1)
             OutlinedButton(
-              onPressed: () => openCalendarTask(
-                context,
-                repo,
-                widget.perform,
-                task['id'] as String,
-                item.entry.start,
-              ),
+              onPressed: taskBusy
+                  ? null
+                  : () {
+                      if (!taskViewCurrent(view, selectedDay) ||
+                          repo.role != 'child') {
+                        return;
+                      }
+                      openCalendarTask(
+                        context,
+                        view.repository,
+                        widget.perform,
+                        task['id'] as String,
+                        item.entry.start,
+                      );
+                    },
               child: const Text('Отправить результат с фотографией'),
             )
           else
             FilledButton(
               key: ValueKey('result-submit-${task['id']}'),
-              onPressed: busy
+              onPressed: taskBusy
                   ? null
-                  : () => run(
-                      () => repo.mutate(
-                        '/v1/tasks/${task['id']}/submissions',
-                        calendarSubmission(task),
-                        offlineSubmission: true,
-                      ),
+                  : () => taskAction(
+                      task,
+                      _SchoolTaskAction.submit,
+                      view,
+                      selectedDay,
                     ),
               child: const Text('Готово — отправить на проверку'),
             ),
@@ -403,20 +607,26 @@ class _SchoolScreenState extends State<SchoolScreen> {
             const Text('Сначала нужна фотография результата от ребёнка'),
           FilledButton.icon(
             key: ValueKey('result-complete-${task['id']}'),
-            onPressed: busy || !approved || !photoReady
+            onPressed: taskBusy || !repo.online || !approved || !photoReady
                 ? null
-                : () => completeTask(task),
+                : () => taskAction(
+                    task,
+                    _SchoolTaskAction.complete,
+                    view,
+                    selectedDay,
+                  ),
             icon: const Icon(Icons.check),
             label: const Text('Подтвердить выполнение'),
           ),
           if (!approved && repo.role == 'parent')
             OutlinedButton(
-              onPressed: busy
+              onPressed: taskBusy || !repo.online
                   ? null
-                  : () => run(
-                      () => repo.mutate('/v1/tasks/${task['id']}/actions', {
-                        'action': 'approve_finances',
-                      }),
+                  : () => taskAction(
+                      task,
+                      _SchoolTaskAction.approveFinances,
+                      view,
+                      selectedDay,
                     ),
               child: const Text('Согласовать награду'),
             ),
@@ -425,20 +635,15 @@ class _SchoolScreenState extends State<SchoolScreen> {
         if (canMarkTaskNotCompleted(repo.snapshot!['user'], task))
           OutlinedButton(
             key: ValueKey('result-not-completed-${task['id']}'),
-            onPressed: busy || (taskIsRequired(task) && !approved)
+            onPressed:
+                taskBusy || !repo.online || (taskIsRequired(task) && !approved)
                 ? null
-                : () async {
-                    if (!await confirmTaskNotCompleted(context, task) ||
-                        !mounted) {
-                      return;
-                    }
-                    await run(
-                      () => repo.mutate('/v1/tasks/${task['id']}/actions', {
-                        'action': 'not_completed',
-                        'task_version': task['version'],
-                      }),
-                    );
-                  },
+                : () => taskAction(
+                    task,
+                    _SchoolTaskAction.notCompleted,
+                    view,
+                    selectedDay,
+                  ),
             child: Text(
               taskIsRequired(task)
                   ? 'Не выполнено — назначить штраф'
@@ -507,7 +712,11 @@ class _SchoolScreenState extends State<SchoolScreen> {
           'Оценки добавляют родители. Готовые задания отправляй взрослым на проверку.',
         ),
       if (repo.role == 'parent' && !repo.online)
-        const Text('Для изменения и удаления оценок нужен интернет.'),
+        const Text(
+          'Для изменения оценок и подтверждения заданий нужен интернет.',
+        ),
+      if (repo.role == 'relative' && !repo.online)
+        const Text('Для подтверждения заданий нужен интернет.'),
       if (items.isEmpty)
         const Text(
           'На эту дату школьных предметов и заданий нет. Добавьте предметы как занятия внутри события «Школа» в календаре.',
