@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -20,6 +21,8 @@ import 'package:mykids_family/main.dart';
 import 'package:mykids_family/money_screen.dart';
 import 'package:mykids_family/repository.dart';
 import 'package:mykids_family/schedule.dart';
+import 'package:mykids_family/school_screen.dart';
+import 'package:mykids_family/task_rewards.dart';
 import 'package:mykids_family/task_screen.dart';
 import 'package:mykids_family/visuals.dart';
 import 'package:mykids_family/voice_note.dart';
@@ -27,6 +30,8 @@ import 'package:path_provider/path_provider.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:record/record.dart';
 import 'package:workmanager/workmanager.dart';
+
+import '../test/school_task_action_safety_test.dart' show SchoolActionFixture;
 
 // Keep deterministic connection loss in this foreground test. Android still
 // stores real scheduled work; delivery is explicitly exercised by repo.sync().
@@ -1064,6 +1069,132 @@ void main() {
           .writeAsString(jsonEncode(finalStats));
       await File('${support.path}/mykids-quality122-penalty-proof.json')
           .writeAsString(jsonEncode(probe));
+
+      // The following screen checks use synthetic snapshots. The earlier
+      // stages exercise the real SQLite queue, API and monetary ledger.
+      final schoolFailures = <ApiFailure>[];
+      Future<void> school(SchoolActionFixture owner) async {
+        await mount();
+        unawaited(
+          navigator.currentState!.push<void>(
+            MaterialPageRoute<void>(
+              builder: (_) => ListenableBuilder(
+                listenable: owner,
+                builder: (_, _) => SchoolScreen(
+                  repository: owner,
+                  initialDay: DateTime(2026, 10, 12),
+                  gradesOnly: true,
+                  perform: (action) async {
+                    try {
+                      await action();
+                    } on ApiFailure catch (failure) {
+                      schoolFailures.add(failure);
+                      ScaffoldMessenger.of(
+                        navigator.currentContext!,
+                      ).showSnackBar(SnackBar(content: Text(failure.message)));
+                    }
+                  },
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        if (owner.role == 'child') {
+          await tester.scrollUntilVisible(
+            find.byKey(const ValueKey('result-submit-help')),
+            160,
+            scrollable: find
+                .descendant(
+                  of: find.byKey(
+                    const ValueKey('calendar-results-list-2026-10-12'),
+                  ),
+                  matching: find.byType(Scrollable),
+                )
+                .first,
+            maxScrolls: 20,
+          );
+          await tester.pumpAndSettle();
+        }
+      }
+
+      scale = 2;
+      for (final design in GameDesign.all) {
+        gameDesign.value = design;
+        final owner = SchoolActionFixture();
+        owner.task['reward_options'] = mathRewardExample();
+        try {
+          await school(owner);
+          await tap(find.byKey(const ValueKey('result-complete-help')));
+          await tester.enterText(
+            find.byKey(const ValueKey('task-completed-count')),
+            '5',
+          );
+          FocusManager.instance.primaryFocus?.unfocus();
+          await SystemChannels.textInput.invokeMethod<void>('TextInput.hide');
+          await tester.pumpAndSettle();
+          expect(find.text('Начислить: 25 монет'), findsOneWidget);
+          await stage('school-style-${design.id}');
+          final confirm = find.widgetWithText(
+            FilledButton,
+            'Подтвердить результат',
+          );
+          expect(MediaQuery.sizeOf(tester.element(confirm)).width, 320);
+          final label = tester.renderObject<RenderParagraph>(
+            find.descendant(
+              of: confirm,
+              matching: find.text('Подтвердить результат'),
+            ),
+          );
+          expect(
+            label.getBoxesForSelection(
+              const TextSelection(baseOffset: 0, extentOffset: 11),
+            ),
+            hasLength(1),
+          );
+          await tap(confirm);
+          expect(owner.changes.single['body']['completed_count'], 5);
+          expect(owner.changes.single['body']['date'], '2026-10-12');
+        } finally {
+          await tester.pumpWidget(const SizedBox.shrink());
+          owner.client.close();
+          owner.dispose();
+        }
+      }
+      final changedOwner = SchoolActionFixture();
+      try {
+        await school(changedOwner);
+        await tap(find.byKey(const ValueKey('result-complete-help')));
+        changedOwner.changeOwner('role', restore: true);
+        await tester.pumpAndSettle();
+        expect(find.text('Нужно открыть окно заново'), findsOneWidget);
+        await stage('school-old-owner-blocked');
+        await tap(find.widgetWithText(TextButton, 'Закрыть'));
+        expect(changedOwner.changes, isEmpty);
+      } finally {
+        await tester.pumpWidget(const SizedBox.shrink());
+        changedOwner.client.close();
+        changedOwner.dispose();
+      }
+      final offlineOwner = SchoolActionFixture(role: 'child')
+        ..online = false
+        ..queueOnly = true;
+      try {
+        await school(offlineOwner);
+        final send = find.byKey(const ValueKey('result-submit-help'));
+        await tap(send);
+        expect(offlineOwner.task['status'], 'assigned');
+        await school(offlineOwner);
+        await tap(send);
+        expect(offlineOwner.queued, hasLength(1));
+        expect(offlineOwner.changes, hasLength(1));
+        expect(schoolFailures.single.message, contains('сохранён'));
+        await stage('school-queued-result-not-duplicated');
+      } finally {
+        await tester.pumpWidget(const SizedBox.shrink());
+        offlineOwner.client.close();
+        offlineOwner.dispose();
+      }
       await File('${support.path}/mykids-quality122-proof.json').writeAsString(
         jsonEncode({
           'passed': true,
@@ -1091,6 +1222,9 @@ void main() {
           'explicit_penalty_before_reporting_deadline': true,
           'money_penalty_occurrence_and_consent_match': true,
           'penalty_closes_only_its_occurrence_and_blocks_old_approval': true,
+          'school_large_text_five_styles': true,
+          'school_restored_owner_stays_revoked': true,
+          'school_snapshot_queue_once_after_reopening': true,
         }),
       );
     } finally {
